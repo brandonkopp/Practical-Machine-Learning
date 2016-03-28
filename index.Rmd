@@ -1,0 +1,136 @@
+---
+output: html_document
+---
+#Practical Machine Learning Course Project
+**Brandon Kopp**
+
+```{r setup, include=FALSE, warning=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(caret)
+library(ggplot2)
+library(gridExtra)
+```
+## Executive Summary
+
+This report outlines the procedures in selecting a machine learning model to predict the quality of weight lifting exercise movements based on data from three sensor devices. These sensor devices provide dozens of measurements on the speed and direction of movement for various parts of the body. The dataset used below contains these measurements along with a label variable that indicates varying levels of success at completing a dumbbell curl. 
+
+In this analysis, I seek to find the most accurate model for predicting quality labels given the feature variables in the dataset. The selected model will be used to complete the final quiz, so accuracy is much more important than interpretability or speed. Below, I describe how I readied the input data by selecting only those features necessary for analysis. I then split the data into training, testing, and validation sets, then train and test two models; one using linear discriminant analysis and another using random forests. Finally, **I select the random forests model due it's high level of accuracy** and apply it to the validation set in order to get a measure of out-of-sample error.  **The random forests model performs very well, yielding an out-of-sample error rate of 6 per 1000, or a 99.4% accuracy rate.**
+
+## Loading the Data and Selecting Features
+
+The first step in this analysis was to ready the data for testing. The *pml-training* dataset contains 152 separate measures of direction and speed of movement. Having no background in physiology, I have no reason to select a subset of these variables. There are a lot of variables that have missing data which can cause errors in the creation of prediction models. Since there are very few actual values in these columns, I chose to remove these variables entirely from the analysis. I also removed the first seven columns which contain administrative data such as subject identifiers and timestamp variables. This yielded a dataset with 52 features and the label variable "classe."
+
+```{r warning=FALSE,message=FALSE}
+wledata <- read.csv("../pml-training.csv",stringsAsFactors = FALSE)
+sel <- matrix(ncol=2,nrow=ncol(wledata))
+for(i in 1:ncol(wledata)){
+  sel[i,1] <- sum(is.na(wledata[,i]) | nchar(wledata[,i])==0)
+  sel[i,2] <- sel[i,1]==0
+}
+wledata <- wledata[, which(sel[ ,2]==1)]
+wledata <- wledata[ ,8:ncol(wledata)]
+```
+
+## Partitioning the Data for Cross Validation
+
+The dataset has 19622 separate records of the 53 variables selected. This is more than enough to create separate datasets for cross validation. I use the *createDataPartition()* function from the **caret** package to create a validation sample from 25% of the cases. I then split the remaining 75% into training and testing samples. I trained and tested several models using the training and testing sets and then applied the selected model to the validation set.
+
+```{r warning=FALSE,message=FALSE}
+set.seed(221)
+Train <- createDataPartition(wledata$classe, p = 3/4)[[1]]
+training <- wledata[ Train,]
+validation <- wledata[-Train,]
+
+cvTrain <- createDataPartition(training$classe, p = 3/4)[[1]]
+testing <- training[-cvTrain,]
+training <- training[ cvTrain,]
+```
+
+## Model 1 - Linear Discriminant Analysis
+
+With such a large sample, I first wanted to train and test a model that does not require bootstraping or resampling. I was concerned about the processing resources needed to train a model with so much data. Regression based methods (lm, glm) do not work for predicting more than two ordinal categories so I chose linear discriminant analysis (LDA) to differentiate amongst the many quantiative predictors. I used all 52 of the variables remaining in the dataset and trained the model using the label variable "classe."
+
+```{r warning=FALSE, message=FALSE}
+#Linear Discriminant Analysis Model
+modFitlda <- train(classe ~ .,method="lda", data=training)
+predlda <- predict(modFitlda, newdata=testing)
+ldaConfMat <- confusionMatrix(testing$classe, predlda)
+```
+
+The LDA model performed reasonably well in predicting the values in the testing set. The overall accuracy level was `r paste0(round(ldaConfMat$overall[1]*100,1),"%")`. While this is promising, `r paste0(round(ldaConfMat$overall[1]*100,1),"%")` would be a poor performance on the quiz. The confusion matrix in the left panel of *Figure 1* shows that this model is poor in discriminating between properly performed dumbbell curls (A) and improperly performed ones (B-E). A useful model should, at the very least, be able to make this differentiation, but when the dumbbell curl was performed correctly (i.e., Reference = A) the predicted classification was incorrect 22% of the time (241 incorrect responses and 860 correct responses).
+
+## Model 2 - Random Forest Model
+
+Given the mediocre performance of the linear discriminant analysis model, I chose to train and test a model using the random forests algorithm. Once again, all 52 feature variables and the label variable "classe" were used to train the model. 
+
+```{r warning=FALSE, message=FALSE}
+#Random Forests Model
+modFitrf <- train(classe ~ .,method="rf", data=training)
+predrf <- predict(modFitrf, newdata=testing)
+rfConfMat <- confusionMatrix(testing$classe, predrf)
+```
+
+The random forests model performed very well. It had a `r paste0(round(rfConfMat$overall[1]*100,1),"%")` accuracy rate in predicting the quality of exercise in the testing dataset.  The confusion matrix in the right panel of *Figure 1* clearly shows the success of this model, with all but a handful of the predictions falling on the diagonal. The increase in accuracy came at the cost of speed. It took nearly half an hour to converge on a final solution.  This is not ideal if the prediction model will need to be retrained often. For the purposes of this test however, it is possible to train the model once and apply it to several datasets.
+
+*Figure 1. Confusion Matrixes for Linear Discriminant Analysis (left panel) and Random Forests Model (right panel).*
+```{r warning=FALSE, message=FALSE, echo=FALSE, fig.width=8, fig.align="center"}
+dat <- data.frame(ldaConfMat$table)
+p1 <- ggplot(dat, aes(Reference, Prediction)) + 
+        geom_tile(aes(fill = Freq), color = "black", size=.25) + 
+        geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low = "lightsteelblue3", high = "indianred4") +
+        labs(title="Linear Discriminant Analysis") +
+        theme(plot.title = element_text(size = 16, face="bold", color = "black"),
+              panel.background = element_blank(),
+              axis.text = element_text(size = 12,face="bold", color="black"),
+              axis.title = element_text(size = 14, face="bold", color = "black"),
+              axis.ticks = element_blank(),
+              legend.position = "none")
+
+dat <- data.frame(rfConfMat$table)
+p2 <- ggplot(dat, aes(Reference, Prediction)) + 
+        geom_tile(aes(fill = Freq), color = "black", size=.25) + 
+        geom_text(aes(label=Freq)) +
+        scale_fill_gradient(low = "lightsteelblue3", high = "indianred4") +
+        labs(title="Random Forests") +
+        theme(plot.title = element_text(size = 16, face="bold", color = "black"),
+              panel.background = element_blank(),
+              axis.text = element_text(size = 12,face="bold", color="black"),
+              axis.title = element_text(size = 14, face="bold", color = "black"),
+              axis.ticks = element_blank(),
+              legend.position = "none")
+grid.arrange(p1, p2, ncol=2)
+```
+
+## Model Selection and Validation
+
+Of the two models presented above, I chose to proceed with the random forests model. The linear discriminant analysis model was constructed in a fraction of the time of the random forests model which could make it ideal for situations where scalability is vital (e.g., when there is much more data or when models need to be retrained frequently).  In this situation, where accuracy is of the highest importance, the random forests model was the clear choice.   
+
+The final step in this analysis is to validate the selected model using the hold-out validation sample that was constructed at the beginning from 25% of the total sample. This validation testing is necessary because the testing sample was used to test the two models presented here, as well as several others.  Testing with this validation sample will give us a more accurate view of the out-of-sample error rate we can expect when the model is used on future datasets.  
+
+```{r warning=FALSE, message=FALSE}
+predval <- predict(modFitrf, newdata=validation)
+valConfMat <- confusionMatrix(validation$classe, predval)
+```
+
+As with the testing set, the accuracy rate for the validation sample is very high; `r paste0(round(valConfMat$overall[1]*100,1),"%")`. We can be reasonably assured that this model will perform well when it is used to predict answers for the final quiz.  The confusion matrix in *Figure 2* shows that nearly all of the predicted values matched the labels in the validation dataset.
+
+*Figure 2. Confusion Matrix for validation of the Random Forest model.*
+```{r warning=FALSE, message=FALSE, echo=FALSE}
+dat <- data.frame(valConfMat$table)
+ggplot(dat, aes(Reference, Prediction)) + 
+  geom_tile(aes(fill = Freq), color = "black", size=.25) + 
+  geom_text(aes(label=Freq)) +
+  scale_fill_gradient(low = "lightsteelblue3", high = "indianred4") +
+  labs(title="Validation - Random Forests Model") +
+  theme(plot.title = element_text(size = 16, face="bold", color = "black"),
+        panel.background = element_blank(),
+        axis.text = element_text(size = 12,face="bold", color="black"),
+        axis.title = element_text(size = 14, face="bold", color = "black"),
+        axis.ticks = element_blank(),
+        legend.position = "none")
+```
+
+## A Follow-up
+
+The random forests model did perform well on the final quiz. I ended up with a 20 out of 20, so I would say that the goals of this analysis were met.  Thank you for reading.
